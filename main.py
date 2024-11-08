@@ -1,7 +1,7 @@
 from datetime import datetime
 from flask import Flask, request, flash, url_for, redirect, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import ForeignKey, Float, Enum, func, engine, create_engine
+from sqlalchemy import ForeignKey, Float, Enum, func, engine, create_engine, extract
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Relationship, Session, sessionmaker
 from flask_login import LoginManager, login_user
 from flask_bootstrap import Bootstrap5
@@ -32,17 +32,20 @@ bootstrap = Bootstrap5(app)
 # session bing-engine
 session = Session(bind=engine)
 
-# Calculating the net income
-@app.route('/net_income/<int:id>', methods=['GET'])
-def calc_net_income(id):
+# # Expenses for the month
+@app.route('/expenses/<int:id>/<int:month>/<int:year>', methods=['POST', 'GET'])
+def monthly_expenses(id, month, year):
   with SessionLocal() as session:
-    user = session.get(User, id)
+    user = db.get_or_404(User, id)
     if user:
-      net_income = user.net_income(session)
-      return jsonify({'NET INCOME': net_income})
+      total_expenses = session.query(func.sum(Transaction.amount)).filter(Transaction.user_id == user,
+                                                                          extract('month', Transaction.date)==month,
+                                                                          extract('year', Transaction.year)==year,
+                                                                          Transaction.type == 'expense'
+                                                                          ).scalar()
+      return jsonify({'success': total_expenses or 0}, 201)
     else:
-      return jsonify({"error": "User not found"}), 404
-
+      return jsonify({'Failed': 'User not found'}, 404)
 
 # Creating the user model
 class User(db.Model):
@@ -68,21 +71,65 @@ class Transaction(db.Model):
   category_id: Mapped[int] = mapped_column(ForeignKey('category.id'), nullable=False)
   category = Relationship('Category', back_populates='transactions')
   expenses = Relationship('Expense', back_populates='transaction')
+  date: Mapped[datetime] = mapped_column(default=datetime.today)
 
-  def calc_income(self, session):
-    total_income = session.query(func.sum(Transaction.amount)).filter(Transaction.user_id == self.id,
-                                                                      Transaction.type=='income').scalar()
-    return total_income if total_income is not None else 0.0
+  # calculate total income
+  def calc_income(self):
+    return db.session.query(func.sum(Transaction.amount)).filter_by(
+      user_id=self.id, type='income'
+    ).scalar() or 0.0
 
-  def calc_expense(self, session):
-    total_expenses = session.query(func.sum(Transaction.expenses)).filter(Transaction.user_id==self.id,
-                                                                          Transaction.type=='expense').scalar()
-    return total_expenses if total_expenses is not None else 0.0
+  # Add income to the total user income
+  def add_income(self):
+    data = request.get_json()
+    amount = data.get('amount', 0.0)
+    if self.user_id:
+      new_transaction = Transaction(
+        user_id = self.user_id,
+        amount = amount,
+        type = 'income',
+        description = data.get('description', 'Additional income'),
+        date = datetime.now()
+      )
+      session.add(new_transaction)
+      session.commit()
+      return jsonify({'Success': "Amount successfully", "new_income": amount})
+    else:
+      return jsonify({'Error': "Invalid data"}, 400)
 
-  def net_income(self, session):
-    return self.calc_income(session) - self.calc_expense(session)
+  # Calculate total expenses
+  def calc_expense(self):
+    return db.session.query(func.sum(Transaction.amount)).filter_by(
+      user_id=self.id, type='expense'
+    ).scalar() or 0.0
 
-# Creating the category model
+  def net_income(self):
+    total_income = self.calc_income()
+    total_expense = self.calc_expense()
+    return total_income - total_expense
+
+# Filter Transactions by category
+@app.route('/by_category/<int:user_id>/<int:category_id>', methods=['GET'])
+def filter_category(user_id, category_id):
+  data = request.get_json()
+  user = db.session.execute(db.select(User).filter(User.id == user_id)).scalar()
+  if user:
+    transactions = db.session.execute(
+      db.select(Transaction).filter(Transaction.user_id==user_id,
+                                  Transaction.type=='expense',
+                                  Transaction.category_id==category_id)).scalars().all()
+    transactions_data = [
+      {
+      'id': transaction.id,
+      'amount': transaction.amount,
+      'type': transaction.type,
+      'description': transaction.description,
+      'date': transaction.date
+    } for transaction in transactions
+    ]
+    return jsonify({'Success': transactions_data})
+
+
 class Category(db.Model):
   __tablename__ = 'category'
   id: Mapped[int] = mapped_column(primary_key=True)
@@ -147,7 +194,16 @@ def login():
         return jsonify({"message": "Login successful"})
     return jsonify({"error": "Invalid credentials"}), 401
 
+# Calculating the net income
+@app.route('/net_income/<int:id>', methods=['GET', 'POST'])
+def calc_net_income(id):
+  user = db.session.get(User, id)
+  if user:
+    net_income = user.net_income()
 
+    return jsonify({'Net Income': net_income})
+  else:
+    return jsonify({'error': 'No such User'}), 404
 
 if __name__ == '__main__':
   app.run(debug=True)
