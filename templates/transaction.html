@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{% block content%}
+<!--Button for different transaction purposes-->
+<div class="row">
+    <h1>Hello {{current_user.username}}!</h1>
+    <div class="col">
+        <a href="{{ url_for('add_income') }}" class="btn btn-primary btn-lg mb-3">Deposit</a>
+    </div>
+     <!-- The Monthly Expenses button has been commented out, but if you wish to re-enable it -->
+    <!-- <div class="col">
+        <a href="{{ url_for('monthly_expenses', month=11, year=2024) }}" class="btn btn-primary btn-lg mb-3">Monthly Expenses</a>
+    </div> -->
+    <div class="col">
+        <a href="{{ url_for('calc_net_income') }}" class="btn btn-primary btn-lg mb-3">Savings</a>
+    </div>
+    <div class="col">
+        <a href="{{ url_for('logout') }}" class="btn btn-primary btn-lg mb-3">Logout</a>
+    </div>
+
+</div>
+
+{%endblock%}

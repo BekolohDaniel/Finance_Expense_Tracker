@@ -1,0 +1,10 @@
+{% from 'bootstrap5/form.html' import render_form %}
+
+{% block content %}
+<form method="POST" action="{{ url_for('login') }}">
+    <div class="container">
+        {{ render_form(form) }}
+    </div>
+</form>
+
+{% endblock %}
