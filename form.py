@@ -4,6 +4,7 @@ from flask_wtf import FlaskForm
 from wtforms.fields.choices import SelectField
 from wtforms.fields.simple import SubmitField
 from wtforms.validators import DataRequired, NumberRange, Length
+from datetime import datetime
 
 
 # Add each default category to the database
@@ -48,3 +49,14 @@ class DepositForm(FlaskForm):
     )
     category = SelectField('Category', choices=default_categories, validators=[DataRequired()])
     submit = SubmitField('Deposit')
+
+
+# Filter expenses by month and year
+class FilterExpense(FlaskForm):
+    current_year = datetime.now().year
+    current_month = datetime.now().month
+    month = [(str(month+1), str(month+1)) for month in range(current_month + 1)]
+    year = [(str(year), str(year)) for year in range(current_year - 10, current_year + 5)]
+    years = SelectField('Year', choices=year)
+    months = SelectField('Month', choices=month)
+    submit = SubmitField('Find')

@@ -5,9 +5,11 @@ from sqlalchemy import ForeignKey, Float, Enum, func, engine, create_engine, ext
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Relationship, Session, sessionmaker
 from flask_login import LoginManager, login_user, UserMixin, login_required, logout_user, current_user
 from flask_bootstrap import Bootstrap5
+from unicodedata import category
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import form
+from form import DepositForm, FilterExpense
 
 
 class Base(DeclarativeBase):
@@ -58,23 +60,6 @@ class Transaction(db.Model):
     category = Relationship('Category', back_populates='transactions')
     expenses = Relationship('Expense', back_populates='transaction')
     date: Mapped[datetime] = mapped_column(default=datetime.now(timezone.utc))
-
-    # calculate total income
-    def calc_income(self):
-        return db.session.query(func.sum(Transaction.amount)).filter_by(
-            user_id=self.id, type='income'
-        ).scalar() or 0.0
-
-    # Calculate total expenses
-    def calc_expense(self):
-        return db.session.query(func.sum(Transaction.amount)).filter_by(
-            user_id=self.id, type='expense'
-        ).scalar() or 0.0
-
-    def net_income(self):
-        total_income = self.calc_income()
-        total_expense = self.calc_expense()
-        return total_income - total_expense
 
 
 class Category(db.Model):
@@ -159,9 +144,14 @@ def login():
 @login_required
 def calc_net_income():
     user = current_user
+    income = db.session.query(func.sum(Transaction.amount)).filter_by(
+        user_id=user.id, type='income'
+    ).scalar() or 0.0
+    expenses = db.session.query(func.sum(Transaction.amount)).filter_by(
+            user_id=user.id, type='expense'
+        ).scalar() or 0.0
+    net_income = income - expenses
     if user:
-        transactions = Transaction.query.filter_by(user_id=user.id).all()
-        net_income = sum(transaction.net_income() for transaction in transactions)
         return render_template('savings.html', current_user=current_user, total=net_income)
     else:
         return jsonify({'error': 'User not found'}), 404
@@ -171,7 +161,7 @@ def calc_net_income():
 @app.route('/by_category/<int:category_id>', methods=['GET'])
 @login_required
 def filter_category(category_id):
-    category = Category.query.filter_by(name='Food').first()
+    category = Category.query.filter_by(name='').first()
     user = current_user
     if user:
         transactions = db.session.execute(
@@ -197,21 +187,25 @@ def filter_category(category_id):
 
 
 # # Expenses for the month
-@app.route('/expenses/<int:month>/<int:year>', methods=['POST', 'GET'])
+@app.route('/expenses', methods=['POST', 'GET'])
 @login_required
-def monthly_expenses(month, year):
+def monthly_expenses():
     user = current_user  # Access logged-in user directly
-    if user:
-        total_expenses = db.session.query(func.sum(Transaction.amount)).filter(
+    forms = FilterExpense()
+    if forms.validate_on_submit():
+        year = forms.years.data
+        month = forms.months.data
+        if user:
+            total_expenses = db.session.query(func.sum(Transaction.amount)).filter(
             Transaction.user_id == user.id,
             extract('month', Transaction.date) == month,
             extract('year', Transaction.date) == year,
             Transaction.type == 'expense'
         ).scalar()
-        return render_template('savings.html', current_user=current_user, total_expenses=total_expenses)
-    else:
-        return jsonify({'Failed': 'User not found'}, 404)
-
+            return jsonify({'Total_Expenses': total_expenses})
+        else:
+            return jsonify({'Failed': 'User not found'}, 404)
+    return render_template('filter_expense.html', current_user=current_user, form=forms)
 
 # logout user
 @app.route('/logout')
@@ -262,6 +256,32 @@ def new_category():
             db.session.add(new_category)
     db.session.commit()
     return render_template('transaction.html')
+
+@app.route('/expense', methods=['GET', 'POST'])
+@login_required
+def make_expenses():
+    forms = DepositForm()
+    if forms.validate_on_submit():
+        amount=forms.amount.data
+        description=forms.description.data
+        category_name=forms.category.data
+
+        category = Category.query.filter_by(name=category_name).first()
+        if category:
+            cat_id=category.id
+            new_expense = Transaction(
+                user_id = current_user.id,
+                amount = amount,
+                type='expense',
+                description = description,
+                category_id = cat_id,
+                date=datetime.now()
+            )
+            db.session.add(new_expense)
+            db.session.commit()
+            return jsonify({'message': 'Expense added successfully'})
+        return jsonify({'message': 'Data entry error'}), 400
+    return render_template('expense.html', form=forms, current_user=current_user)
 
 if __name__ == '__main__':
     app.run(debug=True)
